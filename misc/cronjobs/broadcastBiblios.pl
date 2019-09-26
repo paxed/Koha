@@ -21,6 +21,7 @@ use Modern::Perl;
 use FindBin;
 use POSIX 'strftime';
 use Carp;
+use Koha::Biblios;
 use File::Basename;
 use Getopt::Long qw(:config no_ignore_case);
 use Koha::Biblio::Metadatas;
@@ -28,6 +29,7 @@ use Digest::SHA qw(hmac_sha256_hex);
 use Mojolicious::Lite;
 use Mojo::UserAgent;
 use Mojo::JSON qw(decode_json encode_json);
+use Koha::DateUtils qw( dt_from_string );
 
 my $help = 0;
 my $dt = strftime "%Y-%m-%d %H:%M:%S", ( localtime(time - 5*60) );
@@ -37,6 +39,9 @@ my $all = 0;
 my $biblionumber;
 my $verbose = 0;
 my $limit = 0;
+my $interface;
+my $batchdate = strftime "%Y-%m-%d", ( localtime );
+my $staged = 0;
 
 GetOptions(
     'h|help'                     => \$help,
@@ -45,7 +50,11 @@ GetOptions(
     'a|active'                   => \$active,
     'all'                        => \$all,
     'b|biblionumber:i'           => \$biblionumber,
-    'l|limit:i'                  => \$limit
+    'l|limit:i'                  => \$limit,
+    'i|interface:s'              => \$interface,
+    's|staged'                   => \$staged,
+    'b|batchdate:s'              => \$batchdate,
+
 );
 
 my $usage = <<USAGE;
@@ -58,6 +67,9 @@ my $usage = <<USAGE;
     --all                   Send all biblios, default sends biblios from today
     -b, --biblionumber      Start sending from defined biblionumber
     -l, --limit             Limiting the results of biblios
+    -i, --interface         Interface name: with active add your system interface and with staged add remote.
+    -s, --staged            Export staged records to interface
+    -b, --batchdate         Import batch date, used with 'staged' parameter. Default is today.
 
 USAGE
 
@@ -68,7 +80,7 @@ if ($help) {
 
 my $configPath = $ENV{"KOHA_CONF"};
 my($file, $path, $ext) = fileparse($configPath);
-my $config = plugin Config => {file => $path.'broadcast_config.conf'};
+my $config = plugin Config => {file => $path.'broadcast-config.conf'};
 
 my $params = {
     datetime => $dt,
@@ -81,31 +93,53 @@ my $pageCount = 1;
 my $ua = Mojo::UserAgent->new;
 my $apikey = Digest::SHA::hmac_sha256_hex($config->{apiKey});
 my $headers = {"Authorization" => $apikey};
-my $endpoint  = $active ? $config->{activeEndpoint} : $config->{broadcastEndpoint};
-
-while ($pageCount >= $params->{page}) {
-    my $biblios = biblios($params);
+my $endpoint;  
+if ($staged) {
+    $endpoint = $config->{exportEndpoint};
+    my @biblios = import_records();
     my $count = 0;
-    my $lastnumber;
-    foreach my $biblio (@{$biblios}) {
-        my $tx = $ua->post($endpoint => $headers => json => endpointParams($biblio));
+    foreach my $biblio (@biblios) {
+        my $parameters = $biblio->{parent_id} ? {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, interface => $interface, parent_id => $biblio->{parent_id}, force => 1} : {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, interface => $interface};
+        my $tx = $ua->post($endpoint => $headers => json => $parameters);
         my $response = decode_json($tx->res->body);
-        if ($response->{error}) {
-            print "$biblio->{biblionumber} biblio failed with: $response->{error}!\n";
+        my $error = $response->{error} || $tx->res->error->{message} if $response->{error} || $tx->res->error;
+        if ($error) {
+            print "$biblio->{biblionumber} biblio failed with: $error!\n";
         }
         if ($verbose && defined $response->{message} && $response->{message} eq "Success") {
             print "$biblio->{biblionumber} biblio added succesfully\n";
         }
         $count++;
-        $lastnumber = $biblio->{biblionumber};
     }
-    print "last processed biblio $lastnumber\n";
+
     print "$count biblios processed!\n";
-    if ($count eq $params->{chunks}) {
-        $pageCount++;
-        $params->{page} = $pageCount;
-    } else {
-        $pageCount = 0;
+
+} else {
+    $endpoint = $active ? $config->{activeEndpoint} : $config->{broadcastEndpoint};
+    while ($pageCount >= $params->{page}) {
+        my $biblios = biblios($params);
+        my $count = 0;
+        my $lastnumber;
+        foreach my $biblio (@{$biblios}) {
+            my $tx = $ua->post($endpoint => $headers => json => endpointParams($biblio));
+            my $response = decode_json($tx->res->body);
+            if ($response->{error}) {
+                print "$biblio->{biblionumber} biblio failed with: $response->{error}!\n";
+            }
+            if ($verbose && defined $response->{message} && $response->{message} eq "Success") {
+                print "$biblio->{biblionumber} biblio added succesfully\n";
+            }
+            $count++;
+            $lastnumber = $biblio->{biblionumber};
+        }
+        print "last processed biblio $lastnumber\n";
+        print "$count biblios processed!\n";
+        if ($count eq $params->{chunks}) {
+            $pageCount++;
+            $params->{page} = $pageCount;
+        } else {
+            $pageCount = 0;
+        }
     }
 }
 
@@ -128,12 +162,50 @@ sub biblios {
 
 }
 
+sub import_records {
+    print "Fetch imported records from $batchdate\n";
+    my $marcflavour = C4::Context->preference('marcflavour');
+    my $start = dt_from_string($batchdate.' 00:00:00');
+    my $end = dt_from_string($batchdate.' 23:59:00');
+    my $schema = Koha::Database->new->schema;
+    my $dtf = Koha::Database->new->schema->storage->datetime_parser;
+    my @biblios = $schema->resultset('ImportRecord')->search({status => 'imported', overlay_status => 'no_match', upload_timestamp => {-between => [
+                $dtf->format_datetime( $start ),
+                $dtf->format_datetime( $end ),
+            ]}});
+    
+    my @data;
+    my @components;
+    foreach my $rs (@biblios) {
+        my $cols = { $rs->get_columns };
+        $cols->{biblionumber} = $schema->resultset('ImportBiblio')->search({import_record_id => $cols->{import_record_id}})->get_column("matched_biblionumber")->next;
+        $cols->{marcxml} = Koha::Biblio::Metadatas->find($cols->{biblionumber})->metadata;
+        my $componentparts = Koha::Biblios->find( $cols->{biblionumber} )->componentparts;
+        if ($componentparts) {
+            foreach my $componentpart (@{$componentparts}) {
+                push @components, {biblionumber => $componentpart->{biblionumber}, parent_id => $cols->{biblionumber}};
+            }
+        }
+        push @data, {marcxml => $cols->{marcxml}, biblionumber => $cols->{biblionumber}};
+    }
+    foreach my $componentpart (@components) {
+        my $index;
+        foreach my $d (@data) {
+            if ($componentpart->{biblionumber} eq $d->{biblionumber}) {
+                $data[$index]->{parent_id} = $componentpart->{parent_id};
+            }
+            $index++;
+        }
+    }
+    return @data;
+}
+
 sub endpointParams {
     my ($biblio) = @_;
 
     if ($active) {
-        return {marcxml => $biblio->{metadata}, target_id => $biblio->{biblionumber}, interface_name => $config->{interfaceName}} if !$all;
-        return {marcxml => $biblio->{metadata}, target_id => $biblio->{biblionumber}, interface_name => $config->{interfaceName}, updated => $biblio->{timestamp}};
+        return {marcxml => $biblio->{metadata}, target_id => $biblio->{biblionumber}, interface_name => $interface} if !$all;
+        return {marcxml => $biblio->{metadata}, target_id => $biblio->{biblionumber}, interface_name => $interface, updated => $biblio->{timestamp}};
     } else {
         return {marcxml => $biblio->{metadata}, source_id => $biblio->{biblionumber}, updated => $biblio->{timestamp}};
     }
