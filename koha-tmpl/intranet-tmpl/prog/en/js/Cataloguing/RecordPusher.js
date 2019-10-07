@@ -181,10 +181,10 @@ Cataloguing.RecordPusher = function (displayElementContainer, displayType, opera
                                 <div class="modal-header">\
                                     <ul class="nav nav-pills">\
                                         <li class="nav-item">\
-                                            <a id="exporter" class="nav-link" style="background-color:#007bff; color:#fff;" href="#">Siirto</a>\
+                                            <a id="exporter" class="nav-link" style="background-color:#007bff; color:#fff;" href="#">Siirto<i class="fa fa-refresh" style="margin-left:7px;"></i></a>\
                                         </li>\
                                         <li class="nav-item">\
-                                            <a id="report" class="nav-link" href="#">Tapahtumat</a>\
+                                            <a id="report" class="nav-link" href="#">Tapahtumat<i class="hidden fa fa-refresh" style="margin-left:7px;"></i></a>\
                                         </li>\
                                     </ul>\
                                 </div>\
@@ -210,6 +210,8 @@ Cataloguing.RecordPusher = function (displayElementContainer, displayType, opera
             event.preventDefault();
             $("#export-wrapper").find("#exportRecord").remove();
             $("#report").removeAttr("style");
+            $("#report").find(".fa-refresh").addClass("hidden");
+            $(this).find( ".fa-refresh" ).removeClass("hidden");
             $(this).css({"background-color": "#007bff", "color": "#fff"});
             $( "#report-wrapper" ).addClass("hidden");
             $( "#export-wrapper" ).removeClass("hidden");
@@ -220,6 +222,8 @@ Cataloguing.RecordPusher = function (displayElementContainer, displayType, opera
             event.preventDefault();
             $( "#spinner-wrapper" ).removeClass("hidden");
             $("#exporter").removeAttr("style");
+            $("#exporter").find(".fa-refresh").addClass("hidden");
+            $(this).find(".fa-refresh").removeClass("hidden");
             $(this).css({"background-color": "#007bff", "color": "#fff"});
             $( "#export-wrapper" ).addClass("hidden");
             $( "#report-wrapper" ).removeClass("hidden");
