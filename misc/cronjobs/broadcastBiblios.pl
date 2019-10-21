@@ -30,6 +30,7 @@ use Mojolicious::Lite;
 use Mojo::UserAgent;
 use Mojo::JSON qw(decode_json encode_json);
 use Koha::DateUtils qw( dt_from_string );
+use MARC::Record;
 
 my $help = 0;
 my $dt = strftime "%Y-%m-%d %H:%M:%S", ( localtime(time - 5*60) );
@@ -42,6 +43,10 @@ my $limit = 0;
 my $interface;
 my $batchdate = strftime "%Y-%m-%d", ( localtime );
 my $staged = 0;
+my $stage_type;
+my $target_field;
+my $target_subfield = "";
+my $field_check;
 
 GetOptions(
     'h|help'                     => \$help,
@@ -54,6 +59,10 @@ GetOptions(
     'i|interface:s'              => \$interface,
     's|staged'                   => \$staged,
     'b|batchdate:s'              => \$batchdate,
+    't|type:s'                   => \$stage_type
+    'f|field:s'                  => \$target_field
+    'subfield:s'                 => \$target_subfield
+    'check:s'                    => \$field_check
 
 );
 
@@ -70,11 +79,19 @@ my $usage = <<USAGE;
     -i, --interface         Interface name: with active add your system interface and with staged add remote.
     -s, --staged            Export staged records to interface
     -b, --batchdate         Import batch date, used with 'staged' parameter. Default is today.
+    -t, --type              Stage type, used with 'staged' parameter. Add or update, default is add.
+    -f, --field             Find target id from marcxml, used with 'staged' parameter and update type.
+    --check                 Check that field contains some spesific identifier
 
 USAGE
 
 if ($help) {
     print $usage;
+    exit 0;
+}
+
+if ($staged && $stage_type eq "update" && !$target_field && !$field_check) {
+    print "Target id field and check are missing!";
     exit 0;
 }
 
@@ -99,7 +116,19 @@ if ($staged) {
     my @biblios = import_records();
     my $count = 0;
     foreach my $biblio (@biblios) {
-        my $parameters = $biblio->{parent_id} ? {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, interface => $interface, parent_id => $biblio->{parent_id}, force => 1} : {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, interface => $interface};
+        my $parameters;
+        if ($stage_type eq "update") {
+            my $record = MARC::Record::new_from_xml($biblio->{marcxml}, 'UTF-8');
+            if($record->field($target_field)->subfield($target_subfield)) {
+                my $target_id = $record->field($target_field)->subfield($target_subfield);
+                if ($target_id =~ /$field_check/) {
+                    print "Target id ($target_id) found from $biblio->{biblionumber}!\n";
+                    $parameters = {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, target_id => $target_id, interface => $interface};
+                }
+            }
+        } else {
+            $parameters = $biblio->{parent_id} ? {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, interface => $interface, parent_id => $biblio->{parent_id}, force => 1} : {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, interface => $interface};
+        }
         my $tx = $ua->post($endpoint => $headers => json => $parameters);
         my $response = decode_json($tx->res->body);
         my $error = $response->{error} || $tx->res->error->{message} if $response->{error} || $tx->res->error;
@@ -168,8 +197,9 @@ sub import_records {
     my $start = dt_from_string($batchdate.' 00:00:00');
     my $end = dt_from_string($batchdate.' 23:59:00');
     my $schema = Koha::Database->new->schema;
+    my $type = $stage_type eq "update" ? 'match_applied' : 'no_match';
     my $dtf = Koha::Database->new->schema->storage->datetime_parser;
-    my @biblios = $schema->resultset('ImportRecord')->search({status => 'imported', overlay_status => 'no_match', upload_timestamp => {-between => [
+    my @biblios = $schema->resultset('ImportRecord')->search({status => 'imported', overlay_status => $type, upload_timestamp => {-between => [
                 $dtf->format_datetime( $start ),
                 $dtf->format_datetime( $end ),
             ]}});
