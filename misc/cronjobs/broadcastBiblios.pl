@@ -90,6 +90,11 @@ if ($help) {
     exit 0;
 }
 
+if (!$interface) {
+    print "Remote inteface name is missing!";
+    exit 0;
+}
+
 if ($staged && $stage_type eq "update" && !$target_field && !$field_check) {
     print "Target id field and check are missing!";
     exit 0;
@@ -119,26 +124,29 @@ if ($staged) {
         my $parameters;
         if ($stage_type eq "update") {
             my $record = MARC::Record::new_from_xml($biblio->{marcxml}, 'UTF-8');
-            if($record->field($target_field)->subfield($target_subfield)) {
+            if($record->field($target_field)) {
                 my $target_id = $record->field($target_field)->subfield($target_subfield);
                 if ($target_id =~ /$field_check/) {
                     print "Target id ($target_id) found from $biblio->{biblionumber}!\n";
+                    $target_id = s/\D//g;
                     $parameters = {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, target_id => $target_id, interface => $interface};
                 }
             }
         } else {
             $parameters = $biblio->{parent_id} ? {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, interface => $interface, parent_id => $biblio->{parent_id}, force => 1} : {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, interface => $interface};
         }
-        my $tx = $ua->post($endpoint => $headers => json => $parameters);
-        my $response = decode_json($tx->res->body);
-        my $error = $response->{error} || $tx->res->error->{message} if $response->{error} || $tx->res->error;
-        if ($error) {
-            print "$biblio->{biblionumber} biblio failed with: $error!\n";
+        if ($parameters) {
+            my $tx = $ua->post($endpoint => $headers => json => $parameters);
+            my $response = decode_json($tx->res->body);
+            my $error = $response->{error} || $tx->res->error->{message} if $response->{error} || $tx->res->error;
+            if ($error) {
+                print "$biblio->{biblionumber} biblio failed with: $error!\n";
+            }
+            if ($verbose && defined $response->{message} && $response->{message} eq "Success") {
+                print "$biblio->{biblionumber} biblio added succesfully\n";
+            }
+            $count++;
         }
-        if ($verbose && defined $response->{message} && $response->{message} eq "Success") {
-            print "$biblio->{biblionumber} biblio added succesfully\n";
-        }
-        $count++;
     }
 
     print "$count biblios processed!\n";
@@ -210,7 +218,7 @@ sub import_records {
         my $cols = { $rs->get_columns };
         $cols->{biblionumber} = $schema->resultset('ImportBiblio')->search({import_record_id => $cols->{import_record_id}})->get_column("matched_biblionumber")->next;
         if ($cols->{biblionumber}) {
-            $cols->{marcxml} = Koha::Biblio::Metadatas->find($cols->{biblionumber})->metadata;
+            $cols->{marcxml} = Koha::Biblio::Metadatas->find({biblionumber => $cols->{biblionumber}})->metadata;
             my $componentparts = Koha::Biblios->find( $cols->{biblionumber} )->componentparts;
             if ($componentparts) {
                 foreach my $componentpart (@{$componentparts}) {
