@@ -219,7 +219,7 @@ sub import_records {
         $cols->{biblionumber} = $schema->resultset('ImportBiblio')->search({import_record_id => $cols->{import_record_id}})->get_column("matched_biblionumber")->next;
         if ($cols->{biblionumber}) {
             $cols->{marcxml} = Koha::Biblio::Metadatas->find({biblionumber => $cols->{biblionumber}})->metadata;
-            my $componentparts = Koha::Biblios->find( $cols->{biblionumber} )->componentparts;
+            my $componentparts = Koha::Biblios->find( {biblionumber => $cols->{biblionumber}} )->componentparts;
             if ($componentparts) {
                 foreach my $componentpart (@{$componentparts}) {
                     push @components, {biblionumber => $componentpart->{biblionumber}, parent_id => $cols->{biblionumber}};
