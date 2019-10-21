@@ -209,14 +209,16 @@ sub import_records {
     foreach my $rs (@biblios) {
         my $cols = { $rs->get_columns };
         $cols->{biblionumber} = $schema->resultset('ImportBiblio')->search({import_record_id => $cols->{import_record_id}})->get_column("matched_biblionumber")->next;
-        $cols->{marcxml} = Koha::Biblio::Metadatas->find($cols->{biblionumber})->metadata;
-        my $componentparts = Koha::Biblios->find( $cols->{biblionumber} )->componentparts;
-        if ($componentparts) {
-            foreach my $componentpart (@{$componentparts}) {
-                push @components, {biblionumber => $componentpart->{biblionumber}, parent_id => $cols->{biblionumber}};
+        if ($cols->{biblionumber}) {
+            $cols->{marcxml} = Koha::Biblio::Metadatas->find($cols->{biblionumber})->metadata;
+            my $componentparts = Koha::Biblios->find( $cols->{biblionumber} )->componentparts;
+            if ($componentparts) {
+                foreach my $componentpart (@{$componentparts}) {
+                    push @components, {biblionumber => $componentpart->{biblionumber}, parent_id => $cols->{biblionumber}};
+                }
             }
+            push @data, {marcxml => $cols->{marcxml}, biblionumber => $cols->{biblionumber}};
         }
-        push @data, {marcxml => $cols->{marcxml}, biblionumber => $cols->{biblionumber}};
     }
     foreach my $componentpart (@components) {
         my $index;
