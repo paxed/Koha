@@ -59,10 +59,10 @@ GetOptions(
     'i|interface:s'              => \$interface,
     's|staged'                   => \$staged,
     'b|batchdate:s'              => \$batchdate,
-    't|type:s'                   => \$stage_type
-    'f|field:s'                  => \$target_field
-    'subfield:s'                 => \$target_subfield
-    'check:s'                    => \$field_check
+    't|type:s'                   => \$stage_type,
+    'f|field:s'                  => \$target_field,
+    'subfield:s'                 => \$target_subfield,
+    'check:s'                    => \$field_check,
 
 );
 
