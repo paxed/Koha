@@ -91,12 +91,12 @@ if ($help) {
 }
 
 if (!$interface) {
-    print "Remote inteface name is missing!";
+    print "Remote interface name is missing!\n";
     exit 0;
 }
 
 if ($staged && $stage_type eq "update" && !$target_field && !$field_check) {
-    print "Target id field and check are missing!";
+    print "Target id field and check are missing!\n";
     exit 0;
 }
 
@@ -128,7 +128,7 @@ if ($staged) {
                 my $target_id = $record->field($target_field)->subfield($target_subfield);
                 if ($target_id =~ /$field_check/) {
                     print "Target id ($target_id) found from $biblio->{biblionumber}!\n";
-                    $target_id = s/\D//g;
+                    $target_id =~ s/\D//g;
                     $parameters = {marc => $biblio->{marcxml}, source_id => $biblio->{biblionumber}, target_id => $target_id, interface => $interface};
                 }
             }
